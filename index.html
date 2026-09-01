@@ -55,17 +55,6 @@
   .controls input[type=text]{flex:1;min-width:140px;}
   .controls label{font-size:0.78rem;color:var(--ink-soft);margin-right:-0.4rem;}
 
-  svg#chart{width:100%;height:auto;display:block;}
-  .axis-line{stroke:var(--line);stroke-width:1;}
-  .grid-line{stroke:var(--line);stroke-width:0.5;stroke-dasharray:2,3;}
-  .speed-line{fill:none;stroke:var(--teal);stroke-width:2;}
-  .incline-line{fill:none;stroke:var(--coral);stroke-width:1.5;stroke-dasharray:4,3;}
-  .dot-speed{fill:var(--teal);}
-  .dot-incline{fill:var(--coral);}
-  .axis-label{font-family:'JetBrains Mono',monospace;font-size:10px;fill:var(--ink-soft);}
-  .legend{display:flex;gap:1.5rem;font-size:0.8rem;margin-top:0.75rem;color:var(--ink-soft);}
-  .legend span{display:inline-flex;align-items:center;gap:0.4rem;}
-  .swatch{width:14px;height:2px;display:inline-block;}
 
   table{width:100%;border-collapse:collapse;font-size:0.88rem;}
   thead th{
@@ -86,10 +75,10 @@
   tbody tr:hover{background:rgba(31,111,92,0.06);}
   tbody td{padding:0.65rem 0.6rem;vertical-align:top;}
   td.num{font-family:'JetBrains Mono',monospace;text-align:right;white-space:nowrap;}
-  td.date{font-family:'JetBrains Mono',monospace;white-space:nowrap;vertical-align:top;}
+  td.date{font-family:'JetBrains Mono',monospace;white-space:nowrap;vertical-align:middle;}
   .session-total{font-size:0.72rem;color:var(--ink-soft);margin-top:0.2rem;}
   td.note{color:var(--ink-soft);font-size:0.83rem;}
-  td.bpm{font-family:'JetBrains Mono',monospace;font-size:0.8rem;color:var(--ink-soft);white-space:nowrap;vertical-align:top;}
+  td.bpm{font-family:'JetBrains Mono',monospace;font-size:0.8rem;color:var(--ink-soft);white-space:nowrap;vertical-align:middle;}
 
   .pager{display:flex;justify-content:space-between;align-items:center;margin-top:1.1rem;font-size:0.82rem;color:var(--ink-soft);}
   .pager button{
@@ -128,15 +117,6 @@
     <div class="stat"><div class="label">累計時數</div><div class="val" id="stat-minutes">–</div></div>
     <div class="stat"><div class="label">平均心率</div><div class="val" id="stat-bpm">–</div></div>
     <div class="stat"><div class="label">本月時數</div><div class="val" id="stat-month">–</div></div>
-  </div>
-
-  <div class="panel">
-    <h2>速度 / 坡度趨勢</h2>
-    <div id="chart-holder"><div class="loading">載入中…</div></div>
-    <div class="legend">
-      <span><span class="swatch" style="background:var(--teal)"></span>速度 (km/h)</span>
-      <span><span class="swatch" style="background:var(--coral);border-top:1px dashed var(--coral);height:0;"></span>坡度 (%)</span>
-    </div>
   </div>
 
   <div class="panel">
@@ -227,7 +207,6 @@ function loadData(){
           });
         document.getElementById("last-updated").textContent = "更新於 " + new Date().toLocaleString("zh-TW",{hour12:false});
         renderStats();
-        renderChart();
         renderTable();
       }catch(e){
         showError("資料格式解析失敗: " + e.message);
@@ -240,8 +219,7 @@ function loadData(){
 }
 
 function showError(msg){
-  document.getElementById("chart-holder").innerHTML = '<div class="error">'+msg+'</div>';
-  document.getElementById("table-holder").innerHTML = "";
+  document.getElementById("table-holder").innerHTML = '<div class="error">'+msg+'</div>';
 }
 
 function groupSessions(rows){
@@ -277,59 +255,6 @@ function renderStats(){
   document.getElementById("stat-minutes").innerHTML = totalMin + '<small>分</small>';
   document.getElementById("stat-bpm").innerHTML = (avgBpm!=null ? avgBpm : "–") + '<small>bpm</small>';
   document.getElementById("stat-month").innerHTML = monthMin + '<small>分</small>';
-}
-
-function renderChart(){
-  const holder = document.getElementById("chart-holder");
-  const rows = [...ALL_ROWS].filter(r=>r.speedAvg!=null || r.incline!=null)
-    .sort((a,b)=> new Date(a.date.replace(/\//g,"-")) - new Date(b.date.replace(/\//g,"-")));
-
-  if(rows.length < 2){
-    holder.innerHTML = '<div class="empty">累積至少 2 筆資料後即顯示趨勢圖</div>';
-    return;
-  }
-
-  const recent = rows.slice(-40);
-  const W = 860, H = 220, padL = 34, padR = 34, padT = 12, padB = 24;
-  const n = recent.length;
-  const x = i => padL + (i/(n-1)) * (W - padL - padR);
-
-  const speeds = recent.map(r=>r.speedAvg).filter(v=>v!=null);
-  const inclines = recent.map(r=>r.incline).filter(v=>v!=null);
-  const sMin = Math.min(...speeds)*0.85, sMax = Math.max(...speeds)*1.1;
-  const iMin = 0, iMax = Math.max(...inclines)*1.25 || 1;
-
-  const ySpeed = v => padT + (H-padT-padB) * (1 - (v-sMin)/(sMax-sMin||1));
-  const yIncline = v => padT + (H-padT-padB) * (1 - (v-iMin)/(iMax-iMin||1));
-
-  let gridLines = "";
-  for(let g=0; g<=3; g++){
-    const gy = padT + (H-padT-padB)*(g/3);
-    gridLines += `<line class="grid-line" x1="${padL}" y1="${gy}" x2="${W-padR}" y2="${gy}"/>`;
-  }
-
-  const speedPts = recent.map((r,i)=> r.speedAvg!=null ? `${x(i)},${ySpeed(r.speedAvg)}` : null).filter(Boolean).join(" ");
-  const inclinePts = recent.map((r,i)=> r.incline!=null ? `${x(i)},${yIncline(r.incline)}` : null).filter(Boolean).join(" ");
-
-  const speedDots = recent.map((r,i)=> r.speedAvg!=null ? `<circle class="dot-speed" cx="${x(i)}" cy="${ySpeed(r.speedAvg)}" r="2.3"/>` : "").join("");
-  const inclineDots = recent.map((r,i)=> r.incline!=null ? `<circle class="dot-incline" cx="${x(i)}" cy="${yIncline(r.incline)}" r="2"/>` : "").join("");
-
-  const stepLabels = Math.min(6, n);
-  let labels = "";
-  for(let k=0;k<stepLabels;k++){
-    const idx = Math.round(k*(n-1)/(stepLabels-1));
-    labels += `<text class="axis-label" x="${x(idx)}" y="${H-6}" text-anchor="middle">${recent[idx].date.slice(5)}</text>`;
-  }
-
-  holder.innerHTML = `<svg id="chart" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg">
-    ${gridLines}
-    <line class="axis-line" x1="${padL}" y1="${H-padB}" x2="${W-padR}" y2="${H-padB}"/>
-    <polyline class="incline-line" points="${inclinePts}"/>
-    ${inclineDots}
-    <polyline class="speed-line" points="${speedPts}"/>
-    ${speedDots}
-    ${labels}
-  </svg>`;
 }
 
 function filteredSessions(){
