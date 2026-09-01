@@ -81,13 +81,15 @@
   }
   thead th:hover{color:var(--teal-deep);}
   thead th.active{color:var(--teal-deep);}
+  tbody.session-group{border-top:1px solid var(--ink);}
   tbody tr{border-bottom:1px solid var(--line);}
   tbody tr:hover{background:rgba(31,111,92,0.06);}
   tbody td{padding:0.65rem 0.6rem;vertical-align:top;}
   td.num{font-family:'JetBrains Mono',monospace;text-align:right;white-space:nowrap;}
-  td.date{font-family:'JetBrains Mono',monospace;white-space:nowrap;}
+  td.date{font-family:'JetBrains Mono',monospace;white-space:nowrap;vertical-align:top;}
+  .session-total{font-size:0.72rem;color:var(--ink-soft);margin-top:0.2rem;}
   td.note{color:var(--ink-soft);font-size:0.83rem;}
-  td.bpm{font-family:'JetBrains Mono',monospace;font-size:0.8rem;color:var(--ink-soft);white-space:nowrap;}
+  td.bpm{font-family:'JetBrains Mono',monospace;font-size:0.8rem;color:var(--ink-soft);white-space:nowrap;vertical-align:top;}
 
   .pager{display:flex;justify-content:space-between;align-items:center;margin-top:1.1rem;font-size:0.82rem;color:var(--ink-soft);}
   .pager button{
@@ -106,7 +108,7 @@
 
   @media (max-width:640px){
     .stat-row{grid-template-columns:repeat(2,1fr);}
-    thead th:nth-child(5), tbody td:nth-child(5){display:none;}
+    thead th[data-key="note"], td.note{display:none;}
   }
 </style>
 </head>
@@ -163,7 +165,7 @@
 
 <script>
 const CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vR5sMVCR4COJbacXIfqilQmuf8fWvUTYKT_XDXZ_KJskN_PZTPpopyvBXuwPLGvZ3z0pLdEO7WhYC26/pub?output=csv";
-const PAGE_SIZE = 15;
+const PAGE_SIZE = 10;
 
 let ALL_ROWS = [];
 let SORT_KEY = "date";
@@ -195,9 +197,21 @@ function loadData(){
     skipEmptyLines:true,
     complete: function(results){
       try{
-        ALL_ROWS = results.data
-          .filter(r => r.date && r.date.trim())
-          .map(r => {
+        // Merged cells in Google Sheets only keep their value in the first
+        // (top-left) row when published as CSV — every other row in the
+        // merged range comes through blank. Forward-fill date and bpm from
+        // the previous row so a merged 3-row session doesn't lose 2 of its
+        // rows (or its heart-rate reading).
+        let lastDate = null, lastBpm = null;
+        const filled = results.data.map(r => {
+          let date = (r.date||"").trim();
+          let bpm = (r.bpm||"").trim();
+          if(date) lastDate = date; else date = lastDate;
+          if(bpm) lastBpm = bpm; else bpm = lastBpm;
+          return Object.assign({}, r, {date, bpm});
+        }).filter(r => r.date);
+
+        ALL_ROWS = filled.map(r => {
             const bpm = parseBpm(r.bpm);
             return {
               date: r.date.trim(),
@@ -230,10 +244,26 @@ function showError(msg){
   document.getElementById("table-holder").innerHTML = "";
 }
 
+function groupSessions(rows){
+  const order = [];
+  const map = new Map();
+  rows.forEach(r=>{
+    if(!map.has(r.date)){
+      map.set(r.date, {date:r.date, totalMin:0, bpmAvg:r.bpmAvg, bpmMax:r.bpmMax, bpmRaw:r.bpmRaw, segments:[]});
+      order.push(r.date);
+    }
+    const g = map.get(r.date);
+    g.totalMin += r.min;
+    g.segments.push(r);
+  });
+  return order.map(d=>map.get(d));
+}
+
 function renderStats(){
-  const count = ALL_ROWS.length;
+  const sessions = groupSessions(ALL_ROWS);
+  const count = sessions.length;
   const totalMin = ALL_ROWS.reduce((s,r)=>s+r.min,0);
-  const bpms = ALL_ROWS.map(r=>r.bpmAvg).filter(v=>v!=null);
+  const bpms = sessions.map(s=>s.bpmAvg).filter(v=>v!=null);
   const avgBpm = bpms.length ? Math.round(bpms.reduce((a,b)=>a+b,0)/bpms.length) : null;
 
   const now = new Date();
@@ -302,7 +332,7 @@ function renderChart(){
   </svg>`;
 }
 
-function filteredSorted(){
+function filteredSessions(){
   let rows = [...ALL_ROWS];
   const range = document.getElementById("range-filter").value;
   const q = document.getElementById("search-box").value.trim().toLowerCase();
@@ -316,35 +346,44 @@ function filteredSorted(){
       return (now - d)/(1000*60*60*24) <= days;
     });
   }
+
+  let sessions = groupSessions(rows);
+
   if(q){
-    rows = rows.filter(r => (r.note||"").toLowerCase().includes(q));
+    sessions = sessions.filter(s => s.segments.some(seg => (seg.note||"").toLowerCase().includes(q)));
   }
 
-  rows.sort((a,b)=>{
-    let av = a[SORT_KEY], bv = b[SORT_KEY];
-    if(SORT_KEY==="date"){ av = new Date(a.date.replace(/\//g,"-")); bv = new Date(b.date.replace(/\//g,"-")); }
+  sessions.sort((a,b)=>{
+    let av, bv;
+    if(SORT_KEY==="date" || SORT_KEY==="bpmRaw" || !["incline","speedRaw","min","note"].includes(SORT_KEY)){
+      av = new Date(a.date.replace(/\//g,"-"));
+      bv = new Date(b.date.replace(/\//g,"-"));
+    } else {
+      av = a.segments[0] ? a.segments[0][SORT_KEY] : null;
+      bv = b.segments[0] ? b.segments[0][SORT_KEY] : null;
+    }
     if(av==null) av = -Infinity;
     if(bv==null) bv = -Infinity;
     if(av<bv) return -1*SORT_DIR;
     if(av>bv) return 1*SORT_DIR;
     return 0;
   });
-  return rows;
+  return sessions;
 }
 
 function renderTable(){
   const holder = document.getElementById("table-holder");
-  const rows = filteredSorted();
+  const sessions = filteredSessions();
 
-  if(!rows.length){
+  if(!sessions.length){
     holder.innerHTML = '<div class="empty">沒有符合條件的紀錄</div>';
     document.getElementById("pager").style.display = "none";
     return;
   }
 
-  const totalPages = Math.ceil(rows.length / PAGE_SIZE);
+  const totalPages = Math.ceil(sessions.length / PAGE_SIZE);
   PAGE = Math.min(PAGE, totalPages-1);
-  const pageRows = rows.slice(PAGE*PAGE_SIZE, PAGE*PAGE_SIZE+PAGE_SIZE);
+  const pageSessions = sessions.slice(PAGE*PAGE_SIZE, PAGE*PAGE_SIZE+PAGE_SIZE);
 
   const cols = [
     {key:"date", label:"日期"},
@@ -359,16 +398,30 @@ function renderTable(){
     `<th data-key="${c.key}" class="${c.key===SORT_KEY?'active':''}">${c.label}${c.key===SORT_KEY ? (SORT_DIR===1?' ↑':' ↓') : ''}</th>`
   ).join("") + "</tr>";
 
-  let tbody = pageRows.map(r=>`<tr>
-    <td class="date">${r.date}</td>
-    <td class="num">${r.incline!=null ? r.incline+'%' : '–'}</td>
-    <td class="num">${r.speedRaw || '–'}</td>
-    <td class="num">${r.min}′</td>
-    <td class="note">${r.note || ''}</td>
-    <td class="bpm">${r.bpmRaw || '–'}</td>
-  </tr>`).join("");
+  let tbody = pageSessions.map(s=>{
+    const n = s.segments.length;
+    const rowsHtml = s.segments.map((seg, i)=>{
+      if(i===0){
+        return `<tr class="session-first">
+          <td class="date" rowspan="${n}">${s.date}<div class="session-total">共 ${s.totalMin}′</div></td>
+          <td class="num">${seg.incline!=null ? seg.incline+'%' : '–'}</td>
+          <td class="num">${seg.speedRaw || '–'}</td>
+          <td class="num">${seg.min}′</td>
+          <td class="note">${seg.note || ''}</td>
+          <td class="bpm" rowspan="${n}">${s.bpmRaw || '–'}</td>
+        </tr>`;
+      }
+      return `<tr>
+          <td class="num">${seg.incline!=null ? seg.incline+'%' : '–'}</td>
+          <td class="num">${seg.speedRaw || '–'}</td>
+          <td class="num">${seg.min}′</td>
+          <td class="note">${seg.note || ''}</td>
+        </tr>`;
+    }).join("");
+    return `<tbody class="session-group">${rowsHtml}</tbody>`;
+  }).join("");
 
-  holder.innerHTML = `<table><thead>${thead}</thead><tbody>${tbody}</tbody></table>`;
+  holder.innerHTML = `<table><thead>${thead}</thead>${tbody}</table>`;
 
   holder.querySelectorAll("thead th").forEach(th=>{
     th.addEventListener("click", ()=>{
@@ -381,7 +434,7 @@ function renderTable(){
 
   const pager = document.getElementById("pager");
   pager.style.display = "flex";
-  document.getElementById("page-info").textContent = `第 ${PAGE+1} / ${totalPages} 頁 · 共 ${rows.length} 筆`;
+  document.getElementById("page-info").textContent = `第 ${PAGE+1} / ${totalPages} 頁 · 共 ${sessions.length} 天`;
   document.getElementById("prev-btn").disabled = PAGE===0;
   document.getElementById("next-btn").disabled = PAGE>=totalPages-1;
 }
