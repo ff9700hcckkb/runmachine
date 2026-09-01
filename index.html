@@ -54,32 +54,42 @@
   }
   .controls input[type=text]{flex:1;min-width:140px;}
   .controls label{font-size:0.78rem;color:var(--ink-soft);margin-right:-0.4rem;}
+  #sort-btn{cursor:pointer;}
 
 
-  table{width:100%;border-collapse:collapse;font-size:0.88rem;}
-  thead th{
-    text-align:left;
-    font-weight:600;
-    font-size:0.76rem;
-    color:var(--ink-soft);
-    padding:0 0.6rem 0.6rem;
-    border-bottom:1px solid var(--ink);
+  .session{border-bottom:1px solid var(--line);}
+  .session:first-child{border-top:1px solid var(--ink);}
+  .session-head{
+    width:100%;
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    gap:0.5rem 1rem;
+    padding:0.85rem 0.2rem;
+    background:none;
+    border:none;
     cursor:pointer;
-    user-select:none;
-    white-space:nowrap;
+    text-align:left;
+    font-family:inherit;
+    color:var(--ink);
+    flex-wrap:wrap;
   }
-  thead th:hover{color:var(--teal-deep);}
-  thead th.active{color:var(--teal-deep);}
-  thead th[data-key="incline"], thead th[data-key="speedRaw"], thead th[data-key="min"]{text-align:center;}
-  tbody.session-group{border-top:1px solid var(--ink);}
-  tbody tr{border-bottom:1px solid var(--line);}
-  tbody tr:hover{background:rgba(31,111,92,0.06);}
-  tbody td{padding:0.65rem 0.6rem;vertical-align:top;}
-  td.num{font-family:'JetBrains Mono',monospace;text-align:center;white-space:nowrap;}
-  td.date{font-family:'JetBrains Mono',monospace;white-space:nowrap;vertical-align:middle;}
-  .session-total{font-size:0.72rem;color:var(--ink-soft);margin-top:0.2rem;}
-  td.note{color:var(--ink-soft);font-size:0.83rem;}
-  td.bpm{font-family:'JetBrains Mono',monospace;font-size:0.8rem;color:var(--ink-soft);white-space:nowrap;vertical-align:middle;}
+  .session-head:hover{background:rgba(31,111,92,0.06);}
+  .s-date{font-family:'JetBrains Mono',monospace;font-size:0.95rem;font-weight:600;white-space:nowrap;}
+  .s-meta{display:flex;gap:0.5rem 1rem;flex-wrap:wrap;font-size:0.78rem;color:var(--ink-soft);font-family:'JetBrains Mono',monospace;flex:1;min-width:0;}
+  .s-meta .s-total{white-space:nowrap;}
+  .s-meta .s-bpm{white-space:normal;overflow-wrap:anywhere;min-width:0;}
+  .chevron{transition:transform 0.15s ease;color:var(--ink-soft);flex-shrink:0;font-size:18px;}
+  .session.open .chevron{transform:rotate(180deg);}
+  .session-body{display:none;padding:0 0.2rem 1rem;}
+  .session.open .session-body{display:block;}
+  .seg-table{width:100%;border-collapse:collapse;font-size:0.85rem;}
+  .seg-table td{padding:0.5rem 0.4rem;border-top:1px dashed var(--line);}
+  .seg-table td.num{font-family:'JetBrains Mono',monospace;text-align:center;white-space:nowrap;width:1%;}
+  .seg-table td.note{color:var(--ink-soft);}
+  .seg-labels{font-size:0.72rem;color:var(--ink-soft);}
+  .seg-labels td{padding:0 0.4rem 0.3rem;border-top:none;text-align:center;}
+  .seg-labels td:last-child{text-align:left;}
 
   .pager{display:flex;justify-content:space-between;align-items:center;margin-top:1.1rem;font-size:0.82rem;color:var(--ink-soft);}
   .pager button{
@@ -98,7 +108,6 @@
 
   @media (max-width:640px){
     .stat-row{grid-template-columns:repeat(2,1fr);}
-    thead th[data-key="note"], td.note{display:none;}
   }
 </style>
 </head>
@@ -131,6 +140,7 @@
         <option value="ytd">今年</option>
       </select>
       <input type="text" id="search-box" placeholder="搜尋備註…">
+      <button id="sort-btn" type="button"></button>
     </div>
     <div id="table-holder"><div class="loading">載入中…</div></div>
     <div class="pager" id="pager" style="display:none;">
@@ -149,9 +159,9 @@ const CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vR5sMVCR4COJbac
 const PAGE_SIZE = 10;
 
 let ALL_ROWS = [];
-let SORT_KEY = "date";
 let SORT_DIR = -1;
 let PAGE = 0;
+const OPEN_DATES = new Set();
 
 function parseSpeed(s){
   if(!s) return null;
@@ -280,19 +290,9 @@ function filteredSessions(){
   }
 
   sessions.sort((a,b)=>{
-    let av, bv;
-    if(SORT_KEY==="date" || SORT_KEY==="bpmRaw" || !["incline","speedRaw","min","note"].includes(SORT_KEY)){
-      av = new Date(a.date.replace(/\//g,"-"));
-      bv = new Date(b.date.replace(/\//g,"-"));
-    } else {
-      av = a.segments[0] ? a.segments[0][SORT_KEY] : null;
-      bv = b.segments[0] ? b.segments[0][SORT_KEY] : null;
-    }
-    if(av==null) av = -Infinity;
-    if(bv==null) bv = -Infinity;
-    if(av<bv) return -1*SORT_DIR;
-    if(av>bv) return 1*SORT_DIR;
-    return 0;
+    const av = new Date(a.date.replace(/\//g,"-"));
+    const bv = new Date(b.date.replace(/\//g,"-"));
+    return (av-bv) * SORT_DIR;
   });
   return sessions;
 }
@@ -311,50 +311,39 @@ function renderTable(){
   PAGE = Math.min(PAGE, totalPages-1);
   const pageSessions = sessions.slice(PAGE*PAGE_SIZE, PAGE*PAGE_SIZE+PAGE_SIZE);
 
-  const cols = [
-    {key:"date", label:"日期"},
-    {key:"incline", label:"坡度"},
-    {key:"speedRaw", label:"速度"},
-    {key:"min", label:"時間"},
-    {key:"note", label:"備註"},
-    {key:"bpmRaw", label:"心率"},
-  ];
-
-  let thead = "<tr>" + cols.map(c=>
-    `<th data-key="${c.key}" class="${c.key===SORT_KEY?'active':''}">${c.label}${c.key===SORT_KEY ? (SORT_DIR===1?' ↑':' ↓') : ''}</th>`
-  ).join("") + "</tr>";
-
-  let tbody = pageSessions.map(s=>{
-    const n = s.segments.length;
-    const rowsHtml = s.segments.map((seg, i)=>{
-      if(i===0){
-        return `<tr class="session-first">
-          <td class="date" rowspan="${n}">${s.date}<div class="session-total">共 ${s.totalMin}′</div></td>
-          <td class="num">${seg.incline!=null ? seg.incline+'%' : '–'}</td>
-          <td class="num">${seg.speedRaw || '–'}</td>
-          <td class="num">${seg.min}′</td>
-          <td class="note">${seg.note || ''}</td>
-          <td class="bpm" rowspan="${n}">${s.bpmRaw || '–'}</td>
-        </tr>`;
-      }
-      return `<tr>
-          <td class="num">${seg.incline!=null ? seg.incline+'%' : '–'}</td>
-          <td class="num">${seg.speedRaw || '–'}</td>
-          <td class="num">${seg.min}′</td>
-          <td class="note">${seg.note || ''}</td>
-        </tr>`;
-    }).join("");
-    return `<tbody class="session-group">${rowsHtml}</tbody>`;
+  holder.innerHTML = pageSessions.map(s=>{
+    const isOpen = OPEN_DATES.has(s.date);
+    const segRows = s.segments.map(seg=>`<tr>
+        <td class="num">${seg.incline!=null ? seg.incline+'%' : '–'}</td>
+        <td class="num">${seg.speedRaw || '–'}</td>
+        <td class="num">${seg.min}′</td>
+        <td class="note">${seg.note || ''}</td>
+      </tr>`).join("");
+    return `<div class="session${isOpen?' open':''}" data-date="${s.date}">
+      <button class="session-head" aria-expanded="${isOpen}">
+        <span class="s-date">${s.date}</span>
+        <span class="s-meta">
+          <span class="s-total">共 ${s.totalMin}′ · ${s.segments.length} 段</span>
+          <span class="s-bpm">${s.bpmRaw || ''}</span>
+        </span>
+        <span class="chevron" aria-hidden="true">&#9662;</span>
+      </button>
+      <div class="session-body">
+        <table class="seg-table">
+          <tr class="seg-labels"><td>坡度</td><td>速度</td><td>時間</td><td>備註</td></tr>
+          ${segRows}
+        </table>
+      </div>
+    </div>`;
   }).join("");
 
-  holder.innerHTML = `<table><thead>${thead}</thead>${tbody}</table>`;
-
-  holder.querySelectorAll("thead th").forEach(th=>{
-    th.addEventListener("click", ()=>{
-      const key = th.dataset.key;
-      if(SORT_KEY===key) SORT_DIR *= -1; else { SORT_KEY = key; SORT_DIR = -1; }
-      PAGE = 0;
-      renderTable();
+  holder.querySelectorAll(".session-head").forEach(btn=>{
+    btn.addEventListener("click", ()=>{
+      const wrap = btn.closest(".session");
+      const date = wrap.dataset.date;
+      const nowOpen = wrap.classList.toggle("open");
+      btn.setAttribute("aria-expanded", nowOpen);
+      if(nowOpen) OPEN_DATES.add(date); else OPEN_DATES.delete(date);
     });
   });
 
@@ -365,10 +354,21 @@ function renderTable(){
   document.getElementById("next-btn").disabled = PAGE>=totalPages-1;
 }
 
+function updateSortBtn(){
+  document.getElementById("sort-btn").textContent = SORT_DIR===-1 ? "最新在前" : "最舊在前";
+}
+
 document.getElementById("prev-btn").addEventListener("click", ()=>{ PAGE--; renderTable(); });
 document.getElementById("next-btn").addEventListener("click", ()=>{ PAGE++; renderTable(); });
 document.getElementById("range-filter").addEventListener("change", ()=>{ PAGE=0; renderTable(); });
 document.getElementById("search-box").addEventListener("input", ()=>{ PAGE=0; renderTable(); });
+document.getElementById("sort-btn").addEventListener("click", ()=>{
+  SORT_DIR *= -1;
+  updateSortBtn();
+  PAGE = 0;
+  renderTable();
+});
+updateSortBtn();
 
 loadData();
 setInterval(loadData, 5*60*1000);
