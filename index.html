@@ -195,10 +195,12 @@ function loadData(){
         // rows (or its heart-rate reading).
         let lastDate = null, lastBpm = null;
         const filled = results.data.map(r => {
-          let date = (r.date||"").trim();
-          let bpm = (r.bpm||"").trim();
-          if(date) lastDate = date; else date = lastDate;
-          if(bpm) lastBpm = bpm; else bpm = lastBpm;
+          const rawDate = (r.date||"").trim();
+          const rawBpm = (r.bpm||"").trim();
+          if(rawDate){ lastDate = rawDate; lastBpm = null; } // new session starts here — don't inherit the previous day's bpm
+          const date = rawDate || lastDate;
+          if(rawBpm) lastBpm = rawBpm;
+          const bpm = rawBpm || lastBpm;
           return Object.assign({}, r, {date, bpm});
         }).filter(r => r.date);
 
